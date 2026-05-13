@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -28,6 +28,11 @@ export const huntersTable = pgTable("hunters", {
   lastHunt: timestamp("last_hunt", { withTimezone: true }),
   lastDaily: timestamp("last_daily", { withTimezone: true }),
   lastSeen: timestamp("last_seen", { withTimezone: true }),
+  lastSpin: timestamp("last_spin", { withTimezone: true }),
+  lastKilledMonster: text("last_killed_monster"),
+  lastKilledMonsterRank: text("last_killed_monster_rank"),
+  lastKilledMonsterEmoji: text("last_killed_monster_emoji"),
+  isBanned: boolean("is_banned").notNull().default(false),
   wins: integer("wins").notNull().default(0),
   losses: integer("losses").notNull().default(0),
   pvpWins: integer("pvp_wins").notNull().default(0),

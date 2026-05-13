@@ -1,4 +1,6 @@
 import { Telegraf } from "telegraf";
+import { db, huntersTable, bannedUsersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { handleStart } from "./handlers/start";
 import { handleProfile } from "./handlers/profile";
@@ -13,15 +15,22 @@ import { handleAllocate } from "./handlers/allocate";
 import { handleHelp } from "./handlers/help";
 import { handleMap, handleMove, handleMoveCallback } from "./handlers/map";
 import {
-  handlePvp,
-  handlePvpList,
-  handlePvpAccept,
-  handlePvpDecline,
-  handlePvpDirectChallenge,
-  setBotInstance,
+  handlePvp, handlePvpList, handlePvpAccept, handlePvpDecline,
+  handlePvpDirectChallenge, setBotInstance,
 } from "./handlers/pvp";
 import { handleTrade, handleTradeAccept, handleTradeDecline, setTradeBotInstance } from "./handlers/trade";
 import { handlePremium, handleBuyPremium, handlePremiumBuyCallback, handlePremiumView } from "./handlers/premium";
+import {
+  handleGuild, handleGuildJoinCallback, handleGuildDeclineCallback, setGuildBotInstance,
+} from "./handlers/guild";
+import { handleSpin, handleSpinBuyCallback } from "./handlers/spin";
+import { handleExtract, handleShadows } from "./handlers/shadow";
+import {
+  handleOwnerPanel, handleAddGold, handleAddMana, handleSetLevel,
+  handleBanUser, handleUnbanUser, handleBroadcast, handleResetUser,
+  handleOwnerList, handleSetUpi, setOwnerBotInstance, OWNER_ID,
+} from "./handlers/owner";
+import { handlePayment, handleGenerateQr, handleQrCallback } from "./handlers/payment";
 
 export function startBot(): Telegraf {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
@@ -32,42 +41,102 @@ export function startBot(): Telegraf {
   // Share bot instance with handlers that need to DM other users
   setBotInstance(bot);
   setTradeBotInstance(bot);
+  setGuildBotInstance(bot);
+  setOwnerBotInstance(bot);
 
-  // ─── Commands ──────────────────────────────────────────────────────────────
+  // ─── Global Middleware: Ban Check ─────────────────────────────────────────
+  bot.use(async (ctx, next) => {
+    const user = ctx.from;
+    if (user) {
+      try {
+        const [banned] = await db.select().from(bannedUsersTable)
+          .where(eq(bannedUsersTable.telegramId, String(user.id)));
+        if (banned) {
+          if (ctx.callbackQuery) await ctx.answerCbQuery("🚫 You are banned.");
+          else await ctx.reply("🚫 Your hunter account has been suspended. Contact support.");
+          return;
+        }
+      } catch {}
+    }
+    await next();
+  });
+
+  // ─── Core Commands ─────────────────────────────────────────────────────────
   bot.start(handleStart);
   bot.command("help", handleHelp);
   bot.command("profile", handleProfile);
   bot.command("me", handleProfile);
   bot.command("hunt", handleHunt);
+
+  // ─── Dungeon ───────────────────────────────────────────────────────────────
   bot.command("dungeon", handleDungeon);
   bot.command("dungeons", handleDungeonList);
+
+  // ─── Inventory & Shop ──────────────────────────────────────────────────────
   bot.command("inventory", handleInventory);
   bot.command("inv", handleInventory);
   bot.command("use", handleUseItem);
   bot.command("shop", handleShop);
   bot.command("buy", handleBuy);
   bot.command("sell", handleSell);
+
+  // ─── Daily, Rest, Rank ─────────────────────────────────────────────────────
   bot.command("daily", handleDaily);
   bot.command("rank", handleRankboard);
   bot.command("leaderboard", handleRankboard);
   bot.command("rest", handleRest);
   bot.command("allocate", handleAllocate);
   bot.command("stats", handleAllocate);
-  // World Map
+
+  // ─── World Map ─────────────────────────────────────────────────────────────
   bot.command("map", handleMap);
   bot.command("move", handleMove);
-  // PvP
+
+  // ─── PvP ───────────────────────────────────────────────────────────────────
   bot.command("pvp", handlePvp);
   bot.command("challenge", handlePvp);
-  // Trade
+
+  // ─── Trade ─────────────────────────────────────────────────────────────────
   bot.command("trade", handleTrade);
   bot.command("send", handleTrade);
-  // Premium
+
+  // ─── Premium ───────────────────────────────────────────────────────────────
   bot.command("premium", handlePremium);
   bot.command("buy_premium", (ctx) => handleBuyPremium(ctx));
   bot.command("mythic", handlePremium);
 
-  // ─── Inline Keyboard Callbacks ────────────────────────────────────────────
+  // ─── Guild System ──────────────────────────────────────────────────────────
+  bot.command("guild", handleGuild);
+  bot.command("g", handleGuild);
+
+  // ─── Shadow Extraction ─────────────────────────────────────────────────────
+  bot.command("extract", handleExtract);
+  bot.command("arise", handleExtract);
+  bot.command("shadows", handleShadows);
+  bot.command("army", handleShadows);
+
+  // ─── Spin Wheel ────────────────────────────────────────────────────────────
+  bot.command("spin", handleSpin);
+  bot.command("lottery", handleSpin);
+
+  // ─── Payment / QR ──────────────────────────────────────────────────────────
+  bot.command("payment", handlePayment);
+  bot.command("pay", handlePayment);
+  bot.command("qr", (ctx) => handleGenerateQr(ctx));
+
+  // ─── Owner-Only Commands ───────────────────────────────────────────────────
+  bot.command("owner", handleOwnerPanel);
+  bot.command("addgold", handleAddGold);
+  bot.command("addmana", handleAddMana);
+  bot.command("setlevel", handleSetLevel);
+  bot.command("ban", handleBanUser);
+  bot.command("unban", handleUnbanUser);
+  bot.command("broadcast", handleBroadcast);
+  bot.command("resetuser", handleResetUser);
+  bot.command("ownerlist", handleOwnerList);
+  bot.command("setupi", handleSetUpi);
+
+  // ─── Inline Keyboard Callbacks ─────────────────────────────────────────────
   bot.action("action_hunt", async (ctx) => { await ctx.answerCbQuery(); await handleHunt(ctx); });
   bot.action("action_dungeon", async (ctx) => { await ctx.answerCbQuery(); await handleDungeon(ctx); });
   bot.action("action_inventory", async (ctx) => { await ctx.answerCbQuery(); await handleInventory(ctx); });
@@ -79,6 +148,19 @@ export function startBot(): Telegraf {
   bot.action("action_map", async (ctx) => { await ctx.answerCbQuery(); await handleMap(ctx); });
   bot.action("action_pvp_list", async (ctx) => { await ctx.answerCbQuery(); await handlePvpList(ctx); });
   bot.action("action_premium", async (ctx) => { await ctx.answerCbQuery(); await handlePremium(ctx); });
+  bot.action("action_extract", async (ctx) => { await ctx.answerCbQuery(); await handleExtract(ctx); });
+  bot.action("action_shadows", async (ctx) => { await ctx.answerCbQuery(); await handleShadows(ctx); });
+  bot.action("action_spin", async (ctx) => { await ctx.answerCbQuery(); await handleSpin(ctx); });
+  bot.action("action_guild", async (ctx) => { await ctx.answerCbQuery(); await handleGuild(ctx); });
+  bot.action("action_payment", async (ctx) => { await ctx.answerCbQuery(); await handlePayment(ctx); });
+  bot.action("action_help", async (ctx) => { await ctx.answerCbQuery(); await handleHelp(ctx); });
+  bot.action("spin_buy", handleSpinBuyCallback);
+
+  // QR payment callbacks
+  bot.action(/^qr_(\d+)$/, async (ctx) => {
+    const amount = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+    await handleQrCallback(ctx, amount);
+  });
 
   // Move zone callbacks
   bot.action(/^move_(.+)$/, async (ctx) => {
@@ -121,13 +203,28 @@ export function startBot(): Telegraf {
     await handlePremiumView(ctx, charId);
   });
 
+  // Guild callbacks
+  bot.action(/^guild_join_(\d+)$/, async (ctx) => {
+    const guildId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+    await handleGuildJoinCallback(ctx, guildId);
+  });
+  bot.action("guild_decline", handleGuildDeclineCallback);
+
+  // Owner panel callbacks
+  bot.action("owner_list", async (ctx) => { await ctx.answerCbQuery(); await handleOwnerList(ctx); });
+  bot.action("owner_banned", async (ctx) => {
+    await ctx.answerCbQuery();
+    const banned = await db.select().from(bannedUsersTable);
+    if (banned.length === 0) { await ctx.replyWithHTML(`✅ No banned users.`); return; }
+    const list = banned.map((b, i) => `${i + 1}. <code>${b.telegramId}</code> — ${b.reason}`).join("\n");
+    await ctx.replyWithHTML(`🚫 <b>Banned Users (${banned.length})</b>\n\n${list}`);
+  });
+
   // Catch-all for unknown commands
   bot.on("text", async (ctx) => {
     const text = ctx.message.text;
     if (text.startsWith("/")) {
-      await ctx.replyWithHTML(
-        `⚠️ Unknown command: <b>${text.split(" ")[0]}</b>\nUse /help to see all commands.`,
-      );
+      await ctx.replyWithHTML(`⚠️ Unknown command: <b>${text.split(" ")[0]}</b>\nUse /help to see all commands.`);
     }
   });
 

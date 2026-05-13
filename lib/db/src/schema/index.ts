@@ -4,3 +4,7 @@ export * from "./inventory";
 export * from "./huntLog";
 export * from "./pvpLog";
 export * from "./tradeOffers";
+export * from "./guilds";
+export * from "./guildMembers";
+export * from "./shadowArmy";
+export * from "./bannedUsers";
