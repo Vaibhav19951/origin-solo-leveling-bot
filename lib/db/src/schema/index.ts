@@ -8,3 +8,6 @@ export * from "./guilds";
 export * from "./guildMembers";
 export * from "./shadowArmy";
 export * from "./bannedUsers";
+export * from "./teams";
+export * from "./teamMembers";
+export * from "./activeGates";
