@@ -3,11 +3,24 @@ import { db, huntersTable, inventoryTable, itemsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { pickMonster } from "../data/monsters";
 import { SHOP_ITEMS } from "../data/items";
+import { PREMIUM_CHARACTERS } from "../data/premium";
 import { simulateCombat } from "../utils/combat";
-import { formatCooldown } from "../utils/format";
 import { getXpForLevel, getRankForLevel, getRankUpMessage, getBaseStatsForLevel } from "../utils/ranks";
 
-const HUNT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const HUNT_GIFS = [
+  "https://media.tenor.com/XBxJAbgp80IAAAAC/solo-leveling.gif",
+  "https://media.tenor.com/OPcQf1QI5TIAAAAC/anime-fight.gif",
+  "https://media.tenor.com/rQ0t_g8yMBkAAAAC/sung-jin-woo-solo-leveling.gif",
+];
+
+const VICTORY_GIFS = [
+  "https://media.tenor.com/VGWZ-7GFpFcAAAAC/solo-leveling-sung-jin-woo.gif",
+  "https://media.tenor.com/Hf4KmcBBsLIAAAAC/solo-leveling.gif",
+];
+
+function randomFrom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 export async function handleHunt(ctx: Context): Promise<void> {
   const user = ctx.from;
@@ -23,6 +36,9 @@ export async function handleHunt(ctx: Context): Promise<void> {
     return;
   }
 
+  // Update lastSeen
+  await db.update(huntersTable).set({ lastSeen: new Date() }).where(eq(huntersTable.id, hunter.id));
+
   // Check if dead
   if (hunter.hp <= 0) {
     await ctx.replyWithHTML(
@@ -31,32 +47,38 @@ export async function handleHunt(ctx: Context): Promise<void> {
     return;
   }
 
-  // Check cooldown
-  if (hunter.lastHunt) {
-    const elapsed = Date.now() - hunter.lastHunt.getTime();
-    if (elapsed < HUNT_COOLDOWN_MS) {
-      const remaining = HUNT_COOLDOWN_MS - elapsed;
-      await ctx.replyWithHTML(
-        `⏳ <b>[ SYSTEM ]</b>\nHunt cooldown active.\nNext hunt available in: <b>${formatCooldown(remaining)}</b>`,
-      );
-      return;
-    }
-  }
-
+  // No cooldown — hunt freely!
   const monster = pickMonster(hunter.rank);
 
-  await ctx.replyWithHTML(
+  // Get premium character bonuses
+  const premChar = hunter.premiumCharacter
+    ? PREMIUM_CHARACTERS.find((c) => c.id === hunter.premiumCharacter)
+    : null;
+
+  const encounterMsg =
     `🌑 <b>DUNGEON GATE DETECTED</b> 🌑\n\n` +
     `${monster.emoji} <b>${monster.name}</b> appears!\n` +
     `Rank: <b>${monster.rank}</b>  |  HP: <b>${monster.hp}</b>\n` +
     `<i>${monster.description}</i>\n\n` +
-    `⚔️ <i>Battle commencing...</i>`,
-  );
+    `⚔️ <i>Battle commencing...</i>`;
+
+  // Try to send GIF for hunt start
+  try {
+    await ctx.replyWithAnimation(
+      { url: randomFrom(HUNT_GIFS) },
+      { caption: encounterMsg, parse_mode: "HTML" },
+    );
+  } catch {
+    await ctx.replyWithHTML(encounterMsg);
+  }
 
   // Simulate combat
   const result = simulateCombat(hunter, monster);
 
   let newHp = Math.max(0, hunter.hp - result.damageTaken);
+  let xpGained = monster.xpReward;
+  let goldGained = monster.goldReward;
+  let manaCoinGained = 0;
   let newXp = hunter.xp;
   let newGold = hunter.gold;
   let newLevel = hunter.level;
@@ -72,14 +94,25 @@ export async function handleHunt(ctx: Context): Promise<void> {
   let newWins = hunter.wins;
   let newLosses = hunter.losses;
   let newKills = hunter.monstersKilled;
-
   let rankUpMsg = "";
   let levelUpMsg = "";
   let dropMsg = "";
 
   if (result.won) {
-    newXp += monster.xpReward;
-    newGold += monster.goldReward;
+    // Apply premium multipliers
+    if (premChar) {
+      xpGained = Math.floor(xpGained * premChar.xpMultiplier);
+      goldGained = Math.floor(goldGained * premChar.goldMultiplier);
+    }
+
+    // Mana coins on high-rank monster kills
+    const rankIdx = ["E", "D", "C", "B", "A", "S"].indexOf(monster.rank);
+    if (rankIdx >= 3) {
+      manaCoinGained = (rankIdx + 1) * 5 + Math.floor(Math.random() * 10);
+    }
+
+    newXp += xpGained;
+    newGold += goldGained;
     newWins++;
     newKills++;
 
@@ -96,7 +129,7 @@ export async function handleHunt(ctx: Context): Promise<void> {
       newAgi = stats.agility;
       newInt = stats.intelligence;
       newPer = stats.perception;
-      newHp = Math.min(newHp + 50, newMaxHp); // partial heal on level up
+      newHp = Math.min(newHp + 50, newMaxHp);
     }
 
     // Check rank promotion
@@ -107,7 +140,7 @@ export async function handleHunt(ctx: Context): Promise<void> {
     }
 
     if (newLevel > hunter.level) {
-      levelUpMsg = `\n\n⭐ <b>LEVEL UP!</b> You are now Level <b>${newLevel}</b>!\n+5 Stat Points available via /allocate`;
+      levelUpMsg = `\n\n⭐ <b>LEVEL UP!</b> You are now Level <b>${newLevel}</b>!\n+5 Stat Points — use /allocate`;
     }
 
     // Item drop
@@ -115,29 +148,16 @@ export async function handleHunt(ctx: Context): Promise<void> {
       const dropName = monster.possibleDrops[Math.floor(Math.random() * monster.possibleDrops.length)];
       const shopItem = SHOP_ITEMS.find((i) => i.name === dropName);
       if (shopItem) {
-        // Find or insert item in db
-        const [dbItem] = await db
-          .select()
-          .from(itemsTable)
-          .where(eq(itemsTable.name, dropName));
-
+        const [dbItem] = await db.select().from(itemsTable).where(eq(itemsTable.name, dropName));
         if (dbItem) {
           const [existing] = await db
             .select()
             .from(inventoryTable)
             .where(and(eq(inventoryTable.hunterId, hunter.id), eq(inventoryTable.itemId, dbItem.id)));
-
           if (existing) {
-            await db
-              .update(inventoryTable)
-              .set({ quantity: existing.quantity + 1 })
-              .where(eq(inventoryTable.id, existing.id));
+            await db.update(inventoryTable).set({ quantity: existing.quantity + 1 }).where(eq(inventoryTable.id, existing.id));
           } else {
-            await db.insert(inventoryTable).values({
-              hunterId: hunter.id,
-              itemId: dbItem.id,
-              quantity: 1,
-            });
+            await db.insert(inventoryTable).values({ hunterId: hunter.id, itemId: dbItem.id, quantity: 1 });
           }
           dropMsg = `\n\n🎁 <b>ITEM DROP:</b> ${shopItem.emoji} ${dropName}`;
         }
@@ -145,16 +165,19 @@ export async function handleHunt(ctx: Context): Promise<void> {
     }
 
     const combatLog = result.log.slice(0, 3).join("\n");
+    const mcLine = manaCoinGained > 0 ? `\n💎 Mana Coins: <b>+${manaCoinGained}</b>` : "";
+    const premLine = premChar ? `\n✨ ${premChar.emoji} ${premChar.name} bonus active!` : "";
 
     const victoryMsg =
       `✅ <b>VICTORY!</b>\n\n` +
       `${combatLog}\n\n` +
       `━━━━━ REWARDS ━━━━━\n` +
-      `✨ XP: <b>+${monster.xpReward}</b>  |  💰 Gold: <b>+${monster.goldReward}</b>\n` +
-      `❤️ HP: <b>${newHp}/${newMaxHp}</b>\n` +
-      `📊 XP Progress: <b>${newXp}/${xpToNext}</b>` +
+      `✨ XP: <b>+${xpGained}</b>  |  💰 Gold: <b>+${goldGained}</b>` +
+      mcLine +
+      `\n❤️ HP: <b>${newHp}/${newMaxHp}</b>\n` +
+      `📊 XP: <b>${newXp}/${xpToNext}</b>` +
+      premLine +
       levelUpMsg +
-      rankUpMsg +
       dropMsg;
 
     await db
@@ -168,6 +191,7 @@ export async function handleHunt(ctx: Context): Promise<void> {
         level: newLevel,
         rank: newRank,
         gold: newGold,
+        manaCoin: hunter.manaCoin + manaCoinGained,
         strength: newStr,
         agility: newAgi,
         intelligence: newInt,
@@ -176,18 +200,39 @@ export async function handleHunt(ctx: Context): Promise<void> {
         wins: newWins,
         monstersKilled: newKills,
         lastHunt: new Date(),
+        lastSeen: new Date(),
       })
       .where(eq(huntersTable.id, hunter.id));
 
-    await ctx.replyWithHTML(victoryMsg);
-
-    if (rankUpMsg) {
-      await ctx.replyWithHTML(rankUpMsg);
+    try {
+      await ctx.replyWithAnimation(
+        { url: randomFrom(VICTORY_GIFS) },
+        {
+          caption: victoryMsg,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "⚔️ Hunt Again", callback_data: "action_hunt" },
+              { text: "📊 Profile", callback_data: "action_profile" },
+            ]],
+          },
+        },
+      );
+    } catch {
+      await ctx.replyWithHTML(victoryMsg, {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "⚔️ Hunt Again", callback_data: "action_hunt" },
+            { text: "📊 Profile", callback_data: "action_profile" },
+          ]],
+        },
+      });
     }
+
+    if (rankUpMsg) await ctx.replyWithHTML(rankUpMsg);
   } else {
     newLosses++;
-    newHp = Math.max(0, Math.floor(hunter.hp * 0.4)); // lose 60% HP on loss
-
+    newHp = Math.max(0, Math.floor(hunter.hp * 0.4));
     const combatLog = result.log.slice(0, 3).join("\n");
 
     const defeatMsg =
@@ -195,18 +240,20 @@ export async function handleHunt(ctx: Context): Promise<void> {
       `${combatLog}\n\n` +
       `━━━━━ RESULT ━━━━━\n` +
       `❤️ HP remaining: <b>${newHp}/${hunter.maxHp}</b>\n\n` +
-      `<i>You managed to escape before the fatal blow...</i>\n` +
-      `Use /rest to recover HP.`;
+      `<i>You escaped before the fatal blow...</i>`;
 
     await db
       .update(huntersTable)
-      .set({
-        hp: newHp,
-        losses: newLosses,
-        lastHunt: new Date(),
-      })
+      .set({ hp: newHp, losses: newLosses, lastHunt: new Date(), lastSeen: new Date() })
       .where(eq(huntersTable.id, hunter.id));
 
-    await ctx.replyWithHTML(defeatMsg);
+    await ctx.replyWithHTML(defeatMsg, {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "😴 Rest", callback_data: "action_rest" },
+          { text: "🧪 Use Potion", callback_data: "action_inventory" },
+        ]],
+      },
+    });
   }
 }

@@ -2,7 +2,7 @@ import type { Context } from "telegraf";
 import { db, huntersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { formatHunterProfile } from "../utils/format";
-import { RANK_EMOJIS } from "../utils/ranks";
+import { PREMIUM_CHARACTERS } from "../data/premium";
 
 export async function handleProfile(ctx: Context): Promise<void> {
   const user = ctx.from;
@@ -15,13 +15,26 @@ export async function handleProfile(ctx: Context): Promise<void> {
 
   if (!hunter) {
     await ctx.replyWithHTML(
-      `⚠️ <b>[ SYSTEM ]</b>\nNo hunter record found.\nUse /start to register as a hunter.`,
+      `⚠️ <b>[ SYSTEM ]</b>\nNo hunter record found.\nUse /start to register.`,
     );
     return;
   }
 
-  const rankEmoji = RANK_EMOJIS[hunter.rank] || "⬜";
-  const msg = formatHunterProfile(hunter);
+  await db.update(huntersTable).set({ lastSeen: new Date() }).where(eq(huntersTable.id, hunter.id));
+
+  const premChar = hunter.premiumCharacter
+    ? PREMIUM_CHARACTERS.find((c) => c.id === hunter.premiumCharacter)
+    : null;
+
+  let msg = formatHunterProfile(hunter);
+
+  if (premChar) {
+    msg += `\n\n💎 <b>MYTHIC CHARACTER:</b> ${premChar.emoji} ${premChar.name}\n${premChar.specialAbility}`;
+  }
+
+  msg += `\n\n💎 Mana Coins: <b>${hunter.manaCoin.toLocaleString()} MC</b>`;
+  msg += `\n📍 Location: <b>${hunter.location}</b>`;
+  msg += `\n⚔️ PvP: <b>${hunter.pvpWins}W / ${hunter.pvpLosses}L</b>`;
 
   await ctx.replyWithHTML(msg, {
     reply_markup: {
@@ -31,12 +44,16 @@ export async function handleProfile(ctx: Context): Promise<void> {
           { text: "🏰 Dungeon", callback_data: "action_dungeon" },
         ],
         [
+          { text: "🗺️ World Map", callback_data: "action_map" },
+          { text: "👊 Find PvP", callback_data: "action_pvp_list" },
+        ],
+        [
           { text: "🎒 Inventory", callback_data: "action_inventory" },
           { text: "🏪 Shop", callback_data: "action_shop" },
         ],
         [
+          { text: "💎 Premium Shop", callback_data: "action_premium" },
           { text: "📅 Daily", callback_data: "action_daily" },
-          { text: "🏆 Leaderboard", callback_data: "action_rank" },
         ],
       ],
     },
