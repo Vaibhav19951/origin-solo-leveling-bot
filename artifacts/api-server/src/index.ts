@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startBot } from "./bot/index";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,21 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Start the Telegram bot
+  try {
+    const bot = startBot();
+
+    // Graceful shutdown
+    process.once("SIGINT", () => {
+      logger.info("SIGINT received — stopping bot");
+      bot.stop("SIGINT");
+    });
+    process.once("SIGTERM", () => {
+      logger.info("SIGTERM received — stopping bot");
+      bot.stop("SIGTERM");
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to start Telegram bot");
+  }
 });
