@@ -11,3 +11,4 @@ export * from "./bannedUsers";
 export * from "./teams";
 export * from "./teamMembers";
 export * from "./activeGates";
+export * from "./botConfig";

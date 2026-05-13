@@ -30,7 +30,7 @@ import {
   handleBanUser, handleUnbanUser, handleBroadcast, handleResetUser,
   handleOwnerList, handleSetUpi, setOwnerBotInstance,
 } from "./handlers/owner";
-import { handlePayment, handleGenerateQr, handleQrCallback } from "./handlers/payment";
+import { handlePayment, handleGenerateQr, handleQrCallback, handlePaidNotify, setPaymentBotInstance } from "./handlers/payment";
 import {
   handleTeam, handleSummon, handleTeamJoinCallback, handleTeamDeclineCallback, setTeamBotInstance,
 } from "./handlers/team";
@@ -50,6 +50,7 @@ export function startBot(): Telegraf {
   setGuildBotInstance(bot);
   setOwnerBotInstance(bot);
   setTeamBotInstance(bot);
+  setPaymentBotInstance(bot);
 
   // ─── Global Middleware: Ban Check ─────────────────────────────────────────
   bot.use(async (ctx, next) => {
@@ -210,11 +211,19 @@ export function startBot(): Telegraf {
     await ctx.replyWithHTML(`To create a team:\n<code>/team create [team name]</code>`);
   });
 
-  // QR
+  // QR & Payment
   bot.action(/^qr_(\d+)$/, async (ctx) => {
     const amount = parseInt((ctx.match as RegExpMatchArray)[1], 10);
     await handleQrCallback(ctx, amount);
   });
+  bot.action("paid_notify", async (ctx) => {
+    await handlePaidNotify(ctx);
+  });
+  bot.action(/^paid_confirm_(\d+)_(.+)$/, async (ctx) => {
+    const match = ctx.match as RegExpMatchArray;
+    await handlePaidNotify(ctx, parseInt(match[1], 10), match[2]);
+  });
+  bot.action("action_payment", async (ctx) => { await ctx.answerCbQuery(); await handlePayment(ctx); });
 
   // Move
   bot.action(/^move_(.+)$/, async (ctx) => {

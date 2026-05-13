@@ -1,5 +1,5 @@
 import type { Context } from "telegraf";
-import { db, huntersTable, bannedUsersTable } from "@workspace/db";
+import { db, huntersTable, bannedUsersTable, botConfigTable } from "@workspace/db";
 import { eq, ne } from "drizzle-orm";
 import { logger } from "../../lib/logger";
 import type { Telegraf } from "telegraf";
@@ -213,11 +213,30 @@ export async function handleOwnerList(ctx: Context): Promise<void> {
 export async function handleSetUpi(ctx: Context): Promise<void> {
   if (!isOwner(ctx)) { await ctx.replyWithHTML(`🚫 Access denied.`); return; }
   const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
-  const upiId = text.split(" ")[1]?.trim();
-  if (!upiId) { await ctx.replyWithHTML(`Usage: /setupi [your_upi_id]\nExample: /setupi yourname@upi`); return; }
+  const parts = text.trim().split(/\s+/);
+  const upiId = parts[1]?.trim();
+  const ownerName = parts[2]?.trim() || "SoloLevelingRPG";
 
-  process.env["OWNER_UPI_ID"] = upiId;
-  await ctx.replyWithHTML(`✅ UPI ID set to: <code>${upiId}</code>\n\nNow players can use /payment to see your payment QR.`);
+  if (!upiId) {
+    await ctx.replyWithHTML(
+      `Usage: <code>/setupi [upi_id] [display_name]</code>\n` +
+      `Example: <code>/setupi yourname@paytm YourName</code>\n\n` +
+      `The UPI ID is saved permanently in the database.`,
+    );
+    return;
+  }
+
+  await db.insert(botConfigTable).values({ key: "upi_id", value: upiId })
+    .onConflictDoUpdate({ target: botConfigTable.key, set: { value: upiId, updatedAt: new Date() } });
+  await db.insert(botConfigTable).values({ key: "owner_name", value: ownerName })
+    .onConflictDoUpdate({ target: botConfigTable.key, set: { value: ownerName, updatedAt: new Date() } });
+
+  await ctx.replyWithHTML(
+    `✅ <b>Payment settings saved!</b>\n\n` +
+    `UPI ID: <code>${upiId}</code>\n` +
+    `Display Name: <b>${ownerName}</b>\n\n` +
+    `Players can now use /payment to pay. QR codes will work correctly.`,
+  );
 }
 
 async function findHunter(usernameOrName: string) {
