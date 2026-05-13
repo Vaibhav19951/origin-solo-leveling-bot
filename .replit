@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "postgresql-16"]
 
 [deployment]
 router = "application"
@@ -31,3 +31,6 @@ externalPort = 80
 
 [userenv.shared]
 TELEGRAM_BOT_TOKEN = "7990370974:AAGynz9WA3QW4hePqT4ZTO9F811Y0pExTZQ"
+
+[nix]
+channel = "stable-25_05"
