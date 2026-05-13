@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { handleStart } from "./handlers/start";
 import { handleProfile } from "./handlers/profile";
-import { handleHunt } from "./handlers/hunt";
+import { handleHunt, handleCombatAction } from "./handlers/hunt";
 import { handleDungeon, handleDungeonList } from "./handlers/dungeon";
 import { handleInventory, handleUseItem } from "./handlers/inventory";
 import { handleShop, handleBuy, handleSell } from "./handlers/shop";
@@ -36,6 +36,8 @@ import {
 } from "./handlers/team";
 import { handleGates, handleEnterGate } from "./handlers/gates";
 import { handleAura, handleSetAura, handleAuraStore, handleBuyAura } from "./handlers/aura";
+import { handleEquip, handleWeaponShop, handleBuyWeapon, handleUnequip } from "./handlers/equip";
+import type { CombatMove } from "./utils/combatEngine";
 
 export function startBot(): Telegraf {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
@@ -43,7 +45,6 @@ export function startBot(): Telegraf {
 
   const bot = new Telegraf(token);
 
-  // Share bot instance with handlers that need to DM other users
   setBotInstance(bot);
   setTradeBotInstance(bot);
   setGuildBotInstance(bot);
@@ -67,7 +68,7 @@ export function startBot(): Telegraf {
     await next();
   });
 
-  // ─── Core Commands ─────────────────────────────────────────────────────────
+  // ─── Core ─────────────────────────────────────────────────────────────────
   bot.start(handleStart);
   bot.command("help", handleHelp);
   bot.command("profile", handleProfile);
@@ -82,39 +83,44 @@ export function startBot(): Telegraf {
   bot.command("gates", handleGates);
   bot.command("entergate", handleEnterGate);
 
-  // ─── Shadow System ─────────────────────────────────────────────────────────
+  // ─── Weapons ───────────────────────────────────────────────────────────────
+  bot.command("equip", handleEquip);
+  bot.command("weapons", handleEquip);
+  bot.command("unequip", handleUnequip);
+  bot.command("weaponshop", handleWeaponShop);
+  bot.command("buyweapon", handleBuyWeapon);
+
+  // ─── Shadows ───────────────────────────────────────────────────────────────
   bot.command("arise", handleExtract);
   bot.command("extract", handleExtract);
   bot.command("shadows", handleShadows);
   bot.command("army", handleShadows);
 
-  // ─── Team System ───────────────────────────────────────────────────────────
+  // ─── Team ──────────────────────────────────────────────────────────────────
   bot.command("team", handleTeam);
   bot.command("summon", handleSummon);
 
-  // ─── Guild System ──────────────────────────────────────────────────────────
+  // ─── Guild ─────────────────────────────────────────────────────────────────
   bot.command("guild", handleGuild);
   bot.command("g", handleGuild);
   bot.command("createguild", async (ctx) => {
-    const text = ctx.message?.text || "";
-    const name = text.split(" ").slice(1).join(" ");
-    const fakeCtx = { ...ctx, message: { ...ctx.message, text: `/guild create ${name}` } } as typeof ctx;
-    await handleGuild(fakeCtx);
+    const name = ctx.message?.text.split(" ").slice(1).join(" ") || "";
+    await handleGuild({ ...ctx, message: { ...ctx.message, text: `/guild create ${name}` } } as typeof ctx);
   });
 
-  // ─── PvP / Arena ───────────────────────────────────────────────────────────
+  // ─── PvP ───────────────────────────────────────────────────────────────────
   bot.command("arena", handlePvp);
   bot.command("pvp", handlePvp);
   bot.command("challenge", handlePvp);
   bot.command("pvplist", handlePvpList);
 
-  // ─── Aura System ───────────────────────────────────────────────────────────
+  // ─── Aura ──────────────────────────────────────────────────────────────────
   bot.command("aura", handleAura);
   bot.command("setaura", handleSetAura);
   bot.command("aurastore", handleAuraStore);
   bot.command("buyaura", handleBuyAura);
 
-  // ─── World Map ─────────────────────────────────────────────────────────────
+  // ─── Map ───────────────────────────────────────────────────────────────────
   bot.command("map", handleMap);
   bot.command("move", handleMove);
 
@@ -146,7 +152,7 @@ export function startBot(): Telegraf {
   bot.command("rank", handleRankboard);
   bot.command("leaderboard", handleRankboard);
 
-  // ─── Owner-Only Commands ───────────────────────────────────────────────────
+  // ─── Owner ────────────────────────────────────────────────────────────────
   bot.command("owner", handleOwnerPanel);
   bot.command("addgold", handleAddGold);
   bot.command("addmana", handleAddMana);
@@ -158,7 +164,23 @@ export function startBot(): Telegraf {
   bot.command("ownerlist", handleOwnerList);
   bot.command("setupi", handleSetUpi);
 
-  // ─── Inline Keyboard Callbacks ─────────────────────────────────────────────
+  // ─── Interactive Combat Callbacks ─────────────────────────────────────────
+  bot.action(/^cm_(strike|power|shadow|guard|aura|noop)_(.+)$/, async (ctx) => {
+    const move = (ctx.match as RegExpMatchArray)[1] as CombatMove | "noop";
+    if (move === "noop") { await ctx.answerCbQuery("❌ Not enough MP for this move!", { show_alert: true }); return; }
+    await handleCombatAction(ctx, move as CombatMove);
+  });
+
+  bot.action(/^cm_weapon_info_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const user = ctx.from;
+    if (!user) return;
+    const [hunter] = await db.select().from(huntersTable).where(eq(huntersTable.telegramId, String(user.id)));
+    if (!hunter?.equippedWeapon) { await ctx.answerCbQuery("No weapon equipped.", { show_alert: true }); return; }
+    await ctx.answerCbQuery(`🗡️ ${hunter.equippedWeapon} is active in this fight!`, { show_alert: true });
+  });
+
+  // ─── All Other Callbacks ──────────────────────────────────────────────────
   bot.action("action_hunt", async (ctx) => { await ctx.answerCbQuery(); await handleHunt(ctx); });
   bot.action("action_dungeon", async (ctx) => { await ctx.answerCbQuery(); await handleDungeon(ctx); });
   bot.action("action_gates", async (ctx) => { await ctx.answerCbQuery(); await handleGates(ctx); });
@@ -179,75 +201,66 @@ export function startBot(): Telegraf {
   bot.action("action_payment", async (ctx) => { await ctx.answerCbQuery(); await handlePayment(ctx); });
   bot.action("action_aura", async (ctx) => { await ctx.answerCbQuery(); await handleAura(ctx); });
   bot.action("action_aurastore", async (ctx) => { await ctx.answerCbQuery(); await handleAuraStore(ctx); });
+  bot.action("action_equip", async (ctx) => { await ctx.answerCbQuery(); await handleEquip(ctx); });
+  bot.action("action_weaponshop", async (ctx) => { await ctx.answerCbQuery(); await handleWeaponShop(ctx); });
   bot.action("action_help", async (ctx) => { await ctx.answerCbQuery(); await handleHelp(ctx); });
   bot.action("spin_buy", handleSpinBuyCallback);
   bot.action("team_create_prompt", async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.replyWithHTML(`To create a team, use:\n/team create [team name]\n\nExample: <code>/team create Shadow Soldiers</code>`);
+    await ctx.replyWithHTML(`To create a team:\n<code>/team create [team name]</code>`);
   });
 
-  // QR callbacks
+  // QR
   bot.action(/^qr_(\d+)$/, async (ctx) => {
     const amount = parseInt((ctx.match as RegExpMatchArray)[1], 10);
     await handleQrCallback(ctx, amount);
   });
 
-  // Zone move callbacks
+  // Move
   bot.action(/^move_(.+)$/, async (ctx) => {
-    const zoneName = (ctx.match as RegExpMatchArray)[1];
-    await handleMoveCallback(ctx, zoneName);
+    await handleMoveCallback(ctx, (ctx.match as RegExpMatchArray)[1]);
   });
 
-  // PvP callbacks
+  // PvP
   bot.action(/^pvp_accept_(\d+)$/, async (ctx) => {
-    const challengerId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handlePvpAccept(ctx, challengerId);
+    await handlePvpAccept(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
   bot.action(/^pvp_decline_(\d+)$/, async (ctx) => {
-    const challengerId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handlePvpDecline(ctx, challengerId);
+    await handlePvpDecline(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
   bot.action(/^pvp_challenge_(\d+)_(\d+)$/, async (ctx) => {
-    const targetId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    const manaBet = parseInt((ctx.match as RegExpMatchArray)[2], 10);
-    await handlePvpDirectChallenge(ctx, targetId, manaBet);
+    await handlePvpDirectChallenge(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10), parseInt((ctx.match as RegExpMatchArray)[2], 10));
   });
 
-  // Trade callbacks
+  // Trade
   bot.action(/^trade_accept_(\d+)$/, async (ctx) => {
-    const tradeId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handleTradeAccept(ctx, tradeId);
+    await handleTradeAccept(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
   bot.action(/^trade_decline_(\d+)$/, async (ctx) => {
-    const tradeId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handleTradeDecline(ctx, tradeId);
+    await handleTradeDecline(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
 
-  // Premium callbacks
+  // Premium
   bot.action(/^premium_buy_(.+)$/, async (ctx) => {
-    const charId = (ctx.match as RegExpMatchArray)[1];
-    await handlePremiumBuyCallback(ctx, charId);
+    await handlePremiumBuyCallback(ctx, (ctx.match as RegExpMatchArray)[1]);
   });
   bot.action(/^premium_view_(.+)$/, async (ctx) => {
-    const charId = (ctx.match as RegExpMatchArray)[1];
-    await handlePremiumView(ctx, charId);
+    await handlePremiumView(ctx, (ctx.match as RegExpMatchArray)[1]);
   });
 
-  // Guild callbacks
+  // Guild
   bot.action(/^guild_join_(\d+)$/, async (ctx) => {
-    const guildId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handleGuildJoinCallback(ctx, guildId);
+    await handleGuildJoinCallback(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
   bot.action(/^guild_decline_(\d+)$/, handleGuildDeclineCallback);
 
-  // Team callbacks
+  // Team
   bot.action(/^team_join_(\d+)$/, async (ctx) => {
-    const teamId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
-    await handleTeamJoinCallback(ctx, teamId);
+    await handleTeamJoinCallback(ctx, parseInt((ctx.match as RegExpMatchArray)[1], 10));
   });
   bot.action(/^team_decline_(\d+)$/, handleTeamDeclineCallback);
 
-  // Owner panel callbacks
+  // Owner panel
   bot.action("owner_list", async (ctx) => { await ctx.answerCbQuery(); await handleOwnerList(ctx); });
   bot.action("owner_banned", async (ctx) => {
     await ctx.answerCbQuery();
@@ -269,11 +282,7 @@ export function startBot(): Telegraf {
     logger.error({ err, update: ctx.update }, "Telegram bot error");
   });
 
-  bot.launch({
-    allowedUpdates: ["message", "callback_query"],
-    dropPendingUpdates: true,
-  });
-
+  bot.launch({ allowedUpdates: ["message", "callback_query"], dropPendingUpdates: true });
   logger.info("Telegram bot started (long polling)");
   return bot;
 }

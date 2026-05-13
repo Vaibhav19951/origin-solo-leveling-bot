@@ -27,6 +27,7 @@ export const huntersTable = pgTable("hunters", {
   premiumCharacter: text("premium_character"),
   currentAura: text("current_aura").notNull().default("none"),
   ownedAuras: text("owned_auras").notNull().default("[]"),
+  equippedWeapon: text("equipped_weapon"),
   teamId: integer("team_id"),
   lastHunt: timestamp("last_hunt", { withTimezone: true }),
   lastDaily: timestamp("last_daily", { withTimezone: true }),
