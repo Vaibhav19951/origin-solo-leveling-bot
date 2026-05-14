@@ -4,7 +4,7 @@
 
 <div align="center">
 
-![Solo Leveling Banner](screenshots/banner.png)
+![Solo Leveling Banner](https://chatgpt-image-may-14-2026-02-36-29-pm.tiiny.site/ChatGPT-Image-May-14,-2026,-02_36_29-PM.png)
 
 [![Node.js](https://img.shields.io/badge/Node.js-24-339933?style=for-the-badge&logo=node.js)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=for-the-badge&logo=typescript)](https://typescriptlang.org)
